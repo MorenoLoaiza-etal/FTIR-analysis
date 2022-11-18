@@ -1,0 +1,231 @@
+library("ChemoSpec")
+library("readr")
+library("pvclust")
+library("dendextend")
+library("ape")
+library("dplyr")
+library("mclust")
+library("seriation")
+require("ISLR")
+require("MASS")
+require("caTools")
+require("R.utils")
+require("Hotelling")
+require("hyperSpec")
+require("matlib")
+require("IMTest")
+require("car")
+library("pls")
+library("factoextra")
+library("corrplot")
+
+
+#'
+#' Reconstruct Original Data from PCA Results
+#'
+#' This function allows one to reconstruct an approximation of a data set
+#' that has been reduced by PCA, by using a limited number of principal components.
+#' Inspired by \url{https://stats.stackexchange.com/q/229092/26909}. We are grateful
+#' for this post by StackOverflow contributor Amoeba.
+#' 
+#' @param X A matrix of data, or a structure which can be coerced to a matrix.
+#'        Samples should be in rows, and variables in columns.
+#'
+#' @param ncomp Integer.  The number of principal components to use in reconstructing
+#'        the data set.  Must be no larger than the number of variables.
+#'
+#' @param scale.fun A function to use to scale the data.  If \code{NULL} no scaling
+#'        will be done.
+#'
+#' @return A matrix with the same dimensions as \code{X}.
+#'
+#' @importFrom stats prcomp
+#'
+#' @export
+#'
+#' @tests tinytest
+#' # Data from ?prcomp
+#' C <- chol(S <- toeplitz(.9 ^ (0:31)))
+#' set.seed(17)
+#' X <- matrix(rnorm(32000), 1000, 32)
+#' Z <- X %*% C
+#' 
+#' # Test that passing of quoted or not quoted scale.fun gives the same answer
+#' tst1 <- XhatFromPCA(Z, 5, "sd")
+#' tst2 <- XhatFromPCA(Z, 5, sd)
+#' expect_true(all.equal(tst1, tst2))
+#' 
+#' # Test that scale.fun is parsed correctly when specified in various ways
+#' test_fun <- function(x) {mean(x)}
+#' tst3 <- XhatFromPCA(Z, 5, test_fun)
+#' tst4 <- XhatFromPCA(Z, 5, function(x) mean(x))
+#' expect_true(all.equal(tst4, tst4))
+#' 
+#' # Test that original data set is returned when ncomp = ncol(X) & no scaling
+#' tst5 <- XhatFromPCA(Z, ncol(Z))
+#' expect_true(all.equal(tst5, Z, check.attributes = FALSE))
+#' 
+#' # Test that original data set is returned when ncomp = ncol(X) & no scaling
+#' tst6 <- XhatFromPCA(Z, ncol(Z), sd)
+#' expect_true(all.equal(tst6, Z, check.attributes = FALSE))
+#' 
+#' # Test for handling of bad arguments
+#' expect_error(XhatFromPCA(Z, 35))
+#' expect_error(XhatFromPCA(Z, 3, "nonsense"))
+#' 
+#' 
+#' 
+
+
+XhatFromPCA <- function(X, ncomp = 3, scale.fun = NULL) {
+  # Check arguments
+  if (ncomp > ncol(X)) stop("ncomp cannot be larger than ncol(X)")
+  if (!is.matrix(X)) X <- as.matrix(X)
+  
+  # Determine scaling action
+  if (!is.null(scale.fun)) {
+    if (!inherits(match.fun(scale.fun), "function")) stop("scale.fun was not a function")
+    Xfac <- apply(X, 2, scale.fun)
+  }
+  if (is.null(scale.fun)) Xfac <- rep(1.0, ncol(X))
+  
+  # Center the data
+  Xmu <- colMeans(X)
+  Xscl <- scale(X, scale = Xfac) # center = TRUE
+  
+  # Carry out PCA
+  Xpca <- prcomp(Xscl, center = FALSE) # center FALSE since inbound data was already centered
+  
+  # Compute Xhat
+  Xhat <- Xpca$x[,1:ncomp] %*% t(Xpca$rotation[,1:ncomp])
+  
+  # Undo scaling
+  Xhat <- scale(Xhat, center = FALSE, scale = 1/Xfac)
+  
+  # Undo centering
+  Xhat <- scale(Xhat, center = -Xmu, scale = FALSE)
+}
+
+
+
+
+#compute T2
+
+T2 <- function(X, ncomp = 3, scale.fun = NULL) {
+  # Check arguments
+  if (ncomp > ncol(X)) stop("ncomp cannot be larger than ncol(X)")
+  if (!is.matrix(X)) X <- as.matrix(X)
+  
+  # Determine scaling action
+  if (!is.null(scale.fun)) {
+    if (!inherits(match.fun(scale.fun), "function")) stop("scale.fun was not a function")
+    Xfac <- apply(X, 2, scale.fun)
+  }
+  if (is.null(scale.fun)) Xfac <- rep(1.0, ncol(X))
+  
+  # Center the data
+  Xmu <- colMeans(X)
+  Xscl <- scale(X, scale = Xfac) # center = TRUE
+  
+  # Carry out PCA
+  Xpca <- prcomp(Xscl, center = FALSE) # center FALSE since inbound data was already centered
+  
+  # Compute Xhat
+  Xhat <- Xpca$x[,1:ncomp] %*% t(Xpca$rotation[,1:ncomp])
+  
+  # Compute T2
+  
+  T2 <-Xpca$x[,1:ncomp] %*% ginv(t(Xpca$rotation[,1:ncomp]),1E-6) %*% t(Xpca$x[,1:ncomp])
+  
+  # Undo scaling
+  Xhat <- scale(Xhat, center = FALSE, scale = 1/Xfac)
+  
+  # Undo centering
+  Xhat <- scale(Xhat, center = -Xmu, scale = FALSE)
+}
+
+
+
+
+
+raw=files2SpectraObject(gr.crit = c("C","T"), gr.cols = c("black","red"),freq.unit = "Wavenumber (cm-1)",int.unit = "Absorbance", fileExt = "\\.(csv|CSV)$", out.file = "scr", debug = TRUE, sep = ",", dec = ".", header = FALSE, descrip ="CRS FMABC",skip=5)
+
+sumSpectra(raw)
+
+plotSpectra(raw,which = c(1:10))
+
+raw_removed <- removeFreq(raw, rem.freq = raw$freq >1800 | raw$freq < 1000)
+
+plotSpectra(raw_removed,which = c(1:10))
+
+bg <- baselineSpectra(raw_removed,int=FALSE,retC=TRUE,method = "linear")
+
+plotSpectra(bg,which = c(1:10))
+
+norm <-normSpectra(bg,method="PQN")
+
+plotSpectra(norm,which = c(1:10))
+
+pca_norm <- c_pcaSpectra(norm, choice = "autoscale",cent=TRUE)
+
+plot(pca_norm)
+
+plotScores(norm,pca_norm,pcs = c(1,2),ellipse = "none",tol="none",use.sym = FALSE,leg.loc = "topright")
+
+hmapSpectra(norm,title="ATRIO FTIR", t.pos = c(0.5, 0.5, 0.5), cexRow = 1, cexCol = 1,col = heat.colors(5),no.col=10)
+
+#Análise dados brutos
+
+pca_raw <- c_pcaSpectra(raw_removed, choice = "autoscale",cent=TRUE)
+
+plot(pca_raw)
+
+pca_bg <- c_pcaSpectra(bg, choice = "autoscale",cent=TRUE)
+plot(pca_bg)
+
+
+#' # Plot to show the effect of increasing ncomp
+X <-t(bg$data)
+ntests=ncol(X)
+val1 <- rep(NA_real_, ntests)
+val2 <- rep(NA_real_, ntests)
+val3 <- rep(NA_real_, ntests)
+
+for (i in 1:ntests) {
+  del <- XhatFromPCA(X, i, "sd") - X
+  val1[i] <- sqrt(sum(del^2)/length(del)) # Q residuals reduced
+  val2[i] <- mean(del)
+  val3[i] <- sum((del)^2) #Q residuals
+}
+ plot(val1, type = "b",main = "Q residuals reduced", xlab = "No. of Components Retained", ylab = "Qres red")
+ plot(val2, type = "b", main = "Residual Error",
+   xlab = "No. of Components Retained", ylab = "Mean Error")
+ plot(val3, main="Q residuals", xlab = "No. of Components Retained", ylab = "Q residuals")
+  write.csv(val1,"Qresred.csv")
+ write.csv(val2,"Residuals.csv")
+ write.csv(val3,"Qres.csv")
+#' #
+
+#T2 Hotelling's
+Xpc <-pca_bg
+nsamples <-nrow(Xpc$x)
+t2HotelMatrix <-rep(NA_real_,nsamples)
+
+for (i in 1:nsamples) {
+t2HotelMatrix[i] <-Xpc$x[i] %*% ginv(Xpc$rotation)[i] %*% t(Xpc$x)[i]
+}
+plot(t2HotelMatrix)
+write.csv(abs(t2HotelMatrix),"t2hotelmatrix.csv")
+
+#end T2 Hotelling's
+ 
+
+#Individuals contributions to pc's
+
+
+ind <-get_pca_ind(pca_bg)
+fviz_contrib(pca_bg, choice = "ind", axes = 1:2)
+
+#end
+
+
